@@ -1,75 +1,70 @@
 package com.example.android.earthquakereport;
 
+import android.content.Context;
 import android.content.Intent;
+import android.content.SharedPreferences;
+import android.net.ConnectivityManager;
+import android.net.NetworkInfo;
 import android.net.Uri;
-import android.os.AsyncTask;
+import android.app.LoaderManager.LoaderCallbacks;
+import android.app.LoaderManager;
+import android.content.Loader;
+import android.preference.PreferenceManager;
 import android.support.v7.app.AppCompatActivity;
 import android.os.Bundle;
-import android.text.TextUtils;
-import android.util.Log;
+import android.view.Menu;
+import android.view.MenuItem;
 import android.view.View;
 import android.widget.AdapterView;
 import android.widget.ListView;
+import android.widget.ProgressBar;
 import android.widget.TextView;
 
-import com.example.android.earthquakereport.R;
-
-import org.json.JSONArray;
-import org.json.JSONException;
-import org.json.JSONObject;
-
-import java.io.BufferedReader;
-import java.io.IOException;
-import java.io.InputStream;
-import java.io.InputStreamReader;
-import java.net.HttpURLConnection;
-import java.net.MalformedURLException;
-import java.net.URL;
-import java.nio.charset.Charset;
 import java.text.DateFormat;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Date;
+import java.util.List;
 
-public class EarthquakeActivity extends AppCompatActivity {
+public class EarthquakeActivity extends AppCompatActivity implements LoaderCallbacks<List<Quake>> {
 
-    private static final String LOG_TAG = EarthquakeActivity.class.getName();
-
-    String USGSRequestUrl = "http://earthquake.usgs.gov/fdsnws/event/1/query?format=geojson&starttime=" + getDate();
+    /**
+     * Constant value for the earthquake loader ID. We can choose any integer.
+     * This really only comes into play if you're using multiple loaders.
+     */
+    private static final int EARTHQUAKE_LOADER_ID = 1;
+    private static final String USGS_REQUEST_URL = "http://earthquake.usgs.gov/fdsnws/event/1/query";
+    /**
+     * Tag for log messages
+     */
+    private final String LOG_TAG = EarthquakeActivity.class.getName();
+    private QuakeAdapter mAdapter;
+    /**
+     * TextView that is displayed when the list is empty
+     */
+    private TextView mEmptyStateTextView;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_earthquake);
 
-        TextView updateCall = (TextView) findViewById(R.id.update);
-        updateCall.setOnClickListener(new View.OnClickListener() {
-            @Override
-            public void onClick(View view) {
-                QuakeAsyncTask task = new QuakeAsyncTask();
-                task.execute();
-            }
-        });
-    }
-
-    private void updateUi(ArrayList<Quake> earthquakes) {
-
         // Find a reference to the {@link ListView} in the layout
         ListView earthquakeListView = (ListView) findViewById(R.id.list);
 
         // Create a new {@link ArrayAdapter} of earthquakes
-        final QuakeAdapter adapter = new QuakeAdapter(this, earthquakes);
+        mAdapter = new QuakeAdapter(this, new ArrayList<Quake>());
 
         // Set the adapter on the {@link ListView}
         // so the list can be populated in the user interface
-        earthquakeListView.setAdapter(adapter);
+        earthquakeListView.setAdapter(mAdapter);
 
         //Set OnClickListener on the ListView.
         earthquakeListView.setOnItemClickListener(new AdapterView.OnItemClickListener() {
             @Override
             public void onItemClick(AdapterView<?> adapterView, View view, int position, long l) {
                 // Find the current earthquake that was clicked on
-                Quake currentQuake = adapter.getItem(position);
+                Quake currentQuake = mAdapter.getItem(position);
 
                 //Convert the String URL into a URI object (to pass into the Intent constructor)
                 Uri earthquakeUri = Uri.parse(currentQuake.getQuakeUrl());
@@ -81,6 +76,95 @@ public class EarthquakeActivity extends AppCompatActivity {
                 startActivity(websiteIntent);
             }
         });
+
+        //Before launching loading manager, we check if Internet connection is active.
+        ConnectivityManager cm = (ConnectivityManager) getSystemService(Context.CONNECTIVITY_SERVICE);
+
+        NetworkInfo activeNetwork = cm.getActiveNetworkInfo();
+        boolean isConnected = activeNetwork != null &&
+                activeNetwork.isConnectedOrConnecting();
+
+
+        //Set the empty view when no data are to be displayed.
+        mEmptyStateTextView = (TextView) findViewById(R.id.empty_view);
+        earthquakeListView.setEmptyView(mEmptyStateTextView);
+
+        if (isConnected) {
+
+            // Get a reference to the LoaderManager, in order to interact with loaders.
+            LoaderManager loaderManager = getLoaderManager();
+
+            // Initialize the loader. Pass in the int ID constant defined above and pass in null for
+            // the bundle. Pass in this activity for the LoaderCallbacks parameter (which is valid
+            // because this activity implements the LoaderCallbacks interface).
+            loaderManager.initLoader(EARTHQUAKE_LOADER_ID, null, this);
+        } else {
+            ProgressBar spinner = (ProgressBar) findViewById(R.id.loading_spinner);
+            spinner.setVisibility(View.GONE);
+            mEmptyStateTextView.setText(R.string.no_internet);
+        }
+    }
+
+    @Override
+    public Loader<List<Quake>> onCreateLoader(int id, Bundle args) {
+
+        SharedPreferences sharedPrefs = PreferenceManager.getDefaultSharedPreferences(this);
+
+        String minMagnitude = sharedPrefs.getString(getString(R.string.settings_min_magnitude_key),
+                getString(R.string.settings_min_magnitude_default));
+
+        Uri baseUri = Uri.parse(USGS_REQUEST_URL);
+        Uri.Builder uriBuilder = baseUri.buildUpon();
+
+        uriBuilder.appendQueryParameter("format", "geojson");
+        uriBuilder.appendQueryParameter("limit", "10");
+        uriBuilder.appendQueryParameter("minmag", minMagnitude);
+        uriBuilder.appendQueryParameter("orderby", "time");
+
+        return new EarthquakeLoader(this, uriBuilder.toString());
+    }
+
+    @Override
+    public void onLoadFinished(Loader<List<Quake>> loader, List<Quake> earthquakes) {
+
+        ProgressBar spinner = (ProgressBar) findViewById(R.id.loading_spinner);
+        spinner.setVisibility(View.GONE);
+
+        //Set empty state text to display "No earthquakes found."
+        mEmptyStateTextView.setText(R.string.empty_view);
+
+        // Clear the adapter of previous earthquake data
+        mAdapter.clear();
+
+        // If there is a valid list of {@link Earthquake}s, then add them to the adapter's
+        // data set. This will trigger the ListView to update.
+        if (earthquakes != null && !earthquakes.isEmpty()) {
+            mAdapter.addAll(earthquakes);
+        }
+
+    }
+
+    @Override
+    public void onLoaderReset(Loader<List<Quake>> loader) {
+
+        mAdapter.clear();
+    }
+
+    @Override
+    public boolean onCreateOptionsMenu(Menu menu) {
+        getMenuInflater().inflate(R.menu.main, menu);
+        return true;
+    }
+
+    @Override
+    public boolean onOptionsItemSelected(MenuItem item) {
+        int id = item.getItemId();
+        if (id == R.id.action_settings) {
+            Intent settingsIntent = new Intent(this, SettingsActivity.class);
+            startActivity(settingsIntent);
+            return true;
+        }
+        return super.onOptionsItemSelected(item);
     }
 
     //This method returns the actual date to format properly the server request for data.
@@ -89,146 +173,5 @@ public class EarthquakeActivity extends AppCompatActivity {
         dateFormatter.setLenient(false);
         Date today = new Date();
         return dateFormatter.format(today);
-    }
-
-    private class QuakeAsyncTask extends AsyncTask<URL, Void, ArrayList<Quake>> {
-
-        @Override
-        protected ArrayList<Quake> doInBackground(URL... urls) {
-
-            URL url = createUrl(USGSRequestUrl);
-
-            String JsonResponse = "";
-
-            try {
-                JsonResponse = makeHttpRequest(url);
-            } catch (IOException e) {
-                Log.e(LOG_TAG, "Problem making the http request to USGS API", e);
-            }
-
-            return extractDataFromJson(JsonResponse);
-        }
-
-        /**
-         * Update the screen with the given earthquake (which was the result of the
-         * {@link QuakeAsyncTask}).
-         */
-        @Override
-        protected void onPostExecute(ArrayList<Quake> earthquakes) {
-            if (earthquakes == null) {
-                return;
-            }
-            updateUi(earthquakes);
-        }
-
-
-        private URL createUrl(String requestUrl) {
-            URL url;
-            try {
-                url = new URL(requestUrl);
-            } catch (MalformedURLException e) {
-                Log.e(LOG_TAG, "Error while creating the URL", e);
-                return null;
-            }
-            return url;
-        }
-
-        private String makeHttpRequest(URL url) throws IOException {
-            String jsonResponse = "";
-
-            if (url == null) {
-                return jsonResponse;
-            }
-            HttpURLConnection urlConnection = null;
-            InputStream inputStream = null;
-
-            //Stores server code response.
-            int httpResponse;
-
-            try {
-                urlConnection = (HttpURLConnection) url.openConnection();
-                urlConnection.setRequestMethod("GET");
-                urlConnection.setReadTimeout(10000);
-                urlConnection.setConnectTimeout(15000);
-                urlConnection.connect();
-
-                //Get USGS server response code.
-                httpResponse = urlConnection.getResponseCode();
-
-                if (httpResponse == 200) {
-                    inputStream = urlConnection.getInputStream();
-                    jsonResponse = readFromStream(inputStream);
-                } else {
-                    Log.e(LOG_TAG, "HTTP response code is" + httpResponse);
-                }
-            } catch (IOException e) {
-                Log.e(LOG_TAG, "Error making the http request", e);
-            } finally {
-                if (urlConnection != null) {
-                    urlConnection.disconnect();
-                }
-                if (inputStream != null) {
-                    inputStream.close();
-                }
-            }
-            return jsonResponse;
-        }
-
-        private String readFromStream(InputStream inputStream) throws IOException {
-            StringBuilder output = new StringBuilder();
-            if (inputStream != null) {
-                InputStreamReader inputStreamReader = new InputStreamReader(inputStream, Charset.forName("UTF-8"));
-                BufferedReader reader = new BufferedReader(inputStreamReader);
-                String line = reader.readLine();
-
-                while (line != null) {
-                    output.append(line);
-                    line = reader.readLine();
-                }
-            }
-            return output.toString();
-        }
-
-        private ArrayList<Quake> extractDataFromJson(String jsonString) {
-            if (TextUtils.isEmpty(jsonString)) {
-                return null;
-            }
-
-            // Create an empty ArrayList that we can start adding earthquakes to
-            ArrayList<Quake> earthquakes = new ArrayList<>();
-
-            // Try to parse the SAMPLE_JSON_RESPONSE. If there's a problem with the way the JSON
-            // is formatted, a JSONException exception object will be thrown.
-            // Catch the exception so the app doesn't crash, and print the error message to the logs.
-            try {
-
-                // build up a list of Earthquake objects with the corresponding data.
-
-                JSONObject baseJsonResponse = new JSONObject(jsonString);
-                JSONArray features = baseJsonResponse.getJSONArray("features");
-                for (int i = 0; i < features.length(); i++) {
-                    JSONObject earthquake = features.getJSONObject(i);
-                    JSONObject properties = earthquake.getJSONObject("properties");
-
-                    double magnitude = properties.getDouble("mag");
-                    String place = properties.optString("place");
-                    long time = properties.getLong("time");
-                    String url = properties.getString("url");
-
-                    Quake quake = new Quake(magnitude, place, time, url);
-                    earthquakes.add(quake);
-
-                }
-                // Return the list of earthquakes
-                return earthquakes;
-
-            } catch (JSONException e) {
-                // If an error is thrown when executing any of the above statements in the "try" block,
-                // catch the exception here, so the app doesn't crash. Print a log message
-                // with the message from the exception.
-                Log.e(LOG_TAG, "Problem parsing the earthquake JSON results", e);
-            }
-            return null;
-        }
     }
 }

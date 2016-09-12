@@ -26,16 +26,16 @@
     </ListView>
 
     <TextView
+        android:id="@+id/empty_view"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:text="Update"
-        android:textSize="20sp"
-        android:textColor="#fff"
-        android:layout_alignParentBottom="true"
-        android:layout_centerHorizontal="true"
-        android:layout_marginBottom="16dp"
-        android:padding="10dp"
-        android:background="@drawable/update_button"
-        android:id="@+id/update"/>
+        android:layout_centerInParent="true"
+        android:textSize="20sp" />
 
+    <ProgressBar
+        android:id="@+id/loading_spinner"
+        style="@style/Widget.AppCompat.ProgressBar"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_centerInParent="true" />
 </RelativeLayout>
